@@ -117,3 +117,10 @@ func TestContext_WithAndExtractPlan(t *testing.T) {
 		t.Fatal("a context with no plan must report ok=false")
 	}
 }
+
+func TestRegistry_FeaturesEnumerates(t *testing.T) {
+	r := seeded()
+	if got := len(r.Features()); got != 3 {
+		t.Fatalf("Features() must enumerate the 3 registered features; got %d", got)
+	}
+}

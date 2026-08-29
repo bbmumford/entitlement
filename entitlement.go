@@ -103,3 +103,15 @@ func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
 	s, ok := r.sets[featureKey{ns, key}]
 	return s, ok
 }
+
+// Features returns every registered feature (order unspecified) — the read side for a caller that needs
+// to enumerate or count the seeded catalog.
+func (r *Registry) Features() []Feature {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]Feature, 0, len(r.features))
+	for _, f := range r.features {
+		out = append(out, f)
+	}
+	return out
+}
