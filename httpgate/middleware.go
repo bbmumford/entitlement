@@ -69,16 +69,16 @@ func WithInviteResolver(i InviteResolver) Option { return func(g *Gate) { g.invi
 // WithDenier overrides the 403 renderer.
 func WithDenier(d Denier) Option { return func(g *Gate) { g.denier = d } }
 
-// resolveFlag reports the flag decision for a feature: a flagless feature is always on; a flagged feature
-// with no resolver stays dark.
-func (g *Gate) resolveFlag(ctx context.Context, f entitlement.Feature) bool {
-	if f.Flag == "" {
+// resolveFlag reports the flag decision for a feature's or a set's release flag: an empty flag is always
+// on; a flag with no resolver stays dark.
+func (g *Gate) resolveFlag(ctx context.Context, flag string) bool {
+	if flag == "" {
 		return true
 	}
 	if g.flag == nil {
-		return false // flagged feature, unwired resolver → dark (fail-closed)
+		return false // flagged surface, unwired resolver → dark (fail-closed)
 	}
-	return g.flag(ctx, f.Flag)
+	return g.flag(ctx, flag)
 }
 
 func (g *Gate) resolveInvite(ctx context.Context, key string) bool {
@@ -104,7 +104,7 @@ func (g *Gate) RequireFeature(ns entitlement.Namespace, key string) func(http.Ha
 				g.denier(w, r, ns, key)
 				return
 			}
-			flagOn := g.resolveFlag(r.Context(), f)
+			flagOn := g.resolveFlag(r.Context(), f.Flag)
 			invited := g.resolveInvite(r.Context(), key)
 			if !g.reg.Available(ns, plan, key, flagOn, invited) {
 				g.denier(w, r, ns, key)
@@ -115,7 +115,8 @@ func (g *Gate) RequireFeature(ns entitlement.Namespace, key string) func(http.Ha
 	}
 }
 
-// RequireSet returns middleware gating a whole surface by a FeatureSet.
+// RequireSet returns middleware gating a whole surface by a FeatureSet: the set's release flag, the
+// caller's invite and the plan's membership must all admit. An unresolved plan or unregistered set denies.
 func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -124,11 +125,12 @@ func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Han
 				g.denier(w, r, ns, setKey)
 				return
 			}
-			flagOn := true
-			if _, found := g.reg.GetSet(ns, setKey); !found {
+			set, found := g.reg.GetSet(ns, setKey)
+			if !found {
 				g.denier(w, r, ns, setKey)
 				return
 			}
+			flagOn := g.resolveFlag(r.Context(), set.Flag)
 			invited := g.resolveInvite(r.Context(), setKey)
 			if !g.reg.SetAvailable(ns, plan, setKey, flagOn, invited) {
 				g.denier(w, r, ns, setKey)

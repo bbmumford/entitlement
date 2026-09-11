@@ -43,12 +43,15 @@ type Feature struct {
 }
 
 // FeatureSet is a named bundle of feature keys a surface requires as a unit. RequireAll = satisfied only
-// when EVERY member is allowed; otherwise ANY allowed member satisfies it.
+// when EVERY member is allowed; otherwise ANY allowed member satisfies it. Flag is the OPTIONAL release
+// flag for the whole surface, with the same rule as Feature.Flag: empty = always on; non-empty = dark
+// until the caller's flag resolver reports it on.
 type FeatureSet struct {
 	Key        string    `json:"key"`
 	Namespace  Namespace `json:"namespace"`
 	Members    []string  `json:"members"`
 	RequireAll bool      `json:"require_all"`
+	Flag       string    `json:"flag,omitempty"`
 }
 
 // featureKey namespaces the registry by (Namespace, Key).
