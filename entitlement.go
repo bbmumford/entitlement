@@ -1,8 +1,7 @@
-// Package entitlement is the scope-agnostic feature-entitlement gate (extracted from the HSTLES
-// entitlement domain). It answers one authorization question — "does this plan include this feature?" —
-// orthogonal to any RBAC/permission axis. It is a pure in-memory registry seeded at the composition root
-// and read on the hot path; it has no persistence and pulls no dependency. It interprets no axis: a
-// feature's Namespace (was a baked io/ai/platform Product) and a PlanID (was a baked plan enum) are both
+// Package entitlement is the scope-agnostic feature-entitlement gate. It answers one authorization
+// question — "does this plan include this feature?" — orthogonal to any RBAC/permission axis. It is a
+// pure in-memory registry seeded at the composition root and read on the hot path; it has no persistence
+// and pulls no dependency. It interprets no axis: a feature's Namespace and a PlanID are both
 // opaque strings the consumer assigns — a plan may use a feature iff it is in the feature's AllowedPlans
 // set (set-membership IS the validity, so an unknown plan is simply absent and denied). Every gate FAILS
 // CLOSED: an unregistered feature, an unknown namespace, or an unresolved plan denies.
@@ -65,9 +64,9 @@ type featureKey struct {
 // gate reads take the read lock, so a late Register never races a concurrent Allowed.
 //
 // A NIL *Registry is an empty one that cannot be seeded: every read reports nothing and every gate in
-// gate.go denies, because each resolves through Get or GetSet. The httpgate middleware and the endpoint
-// spine hand the registry they were given straight to those reads on every request, so a composition
-// root that never built one must produce a refusal there, not a panic inside the handler chain. A zero
+// gate.go denies, because each resolves through Get or GetSet. The httpgate middleware hands the
+// registry it was given straight to those reads on every request, so a composition root that never
+// built one must produce a refusal there, not a panic inside the handler chain. A zero
 // Registry value is usable as well: its maps are allocated on the first Register.
 type Registry struct {
 	mu       sync.RWMutex
