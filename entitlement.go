@@ -63,6 +63,12 @@ type featureKey struct {
 // Registry is the canonical feature + feature-set registry. One instance is built at the composition
 // root, seeded by the owner, then read on the hot path. Concurrency-safe: seeding takes the write lock,
 // gate reads take the read lock, so a late Register never races a concurrent Allowed.
+//
+// A NIL *Registry is an empty one that cannot be seeded: every read reports nothing and every gate in
+// gate.go denies, because each resolves through Get or GetSet. The httpgate middleware and the endpoint
+// spine hand the registry they were given straight to those reads on every request, so a composition
+// root that never built one must produce a refusal there, not a panic inside the handler chain. A zero
+// Registry value is usable as well: its maps are allocated on the first Register.
 type Registry struct {
 	mu       sync.RWMutex
 	features map[featureKey]Feature
@@ -77,30 +83,49 @@ func NewRegistry() *Registry {
 	}
 }
 
-// Register adds or replaces a feature. Seeding is the owner's job; call it at boot before serving.
+// Register adds or replaces a feature. Seeding is the owner's job; call it at boot before serving. On a
+// nil registry it stores nothing, so the feature stays unregistered and every gate over it denies.
 func (r *Registry) Register(f Feature) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.features == nil {
+		r.features = map[featureKey]Feature{}
+	}
 	r.features[featureKey{f.Namespace, f.Key}] = f
 }
 
-// RegisterSet adds or replaces a feature set.
+// RegisterSet adds or replaces a feature set. On a nil registry it stores nothing, as Register.
 func (r *Registry) RegisterSet(s FeatureSet) {
+	if r == nil {
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.sets == nil {
+		r.sets = map[featureKey]FeatureSet{}
+	}
 	r.sets[featureKey{s.Namespace, s.Key}] = s
 }
 
-// Get returns a registered feature and whether it exists.
+// Get returns a registered feature and whether it exists. A nil registry holds no feature.
 func (r *Registry) Get(ns Namespace, key string) (Feature, bool) {
+	if r == nil {
+		return Feature{}, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	f, ok := r.features[featureKey{ns, key}]
 	return f, ok
 }
 
-// GetSet returns a registered feature set and whether it exists.
+// GetSet returns a registered feature set and whether it exists. A nil registry holds no set.
 func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
+	if r == nil {
+		return FeatureSet{}, false
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	s, ok := r.sets[featureKey{ns, key}]
@@ -108,8 +133,11 @@ func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
 }
 
 // Features returns every registered feature (order unspecified) — the read side for a caller that needs
-// to enumerate or count the seeded catalog.
+// to enumerate or count the seeded catalog. A nil registry returns none.
 func (r *Registry) Features() []Feature {
+	if r == nil {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]Feature, 0, len(r.features))

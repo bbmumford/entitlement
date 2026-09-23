@@ -45,17 +45,29 @@ type Gate struct {
 	denier  Denier
 }
 
-// NewGate builds a Gate. reg and extract are required (a nil extractor would fail every request closed,
-// which is safe but useless). flag/invite/denier are optional: a nil flag resolver darks any FLAGGED
-// feature (fail-closed); a nil invite resolver treats every surface as invited; a nil denier uses the
-// default 403.
+// NewGate builds a Gate. reg and extract are required, and a missing one refuses rather than panics:
+// a nil registry reports every feature and set unregistered, so each request is denied; a nil extractor
+// is replaced by one that never resolves a plan, so each request is denied. That is safe and useless,
+// which is what an unwired gate should be. flag/invite/denier are optional: a nil flag resolver darks
+// any FLAGGED feature (fail-closed); a nil invite resolver treats every surface as invited; a nil denier,
+// including one passed through WithDenier, uses the default 403.
 func NewGate(reg *entitlement.Registry, extract PlanExtractor, opts ...Option) *Gate {
 	g := &Gate{reg: reg, extract: extract, denier: defaultDenier}
 	for _, o := range opts {
 		o(g)
 	}
+	if g.extract == nil {
+		g.extract = unresolvedPlan
+	}
+	if g.denier == nil {
+		g.denier = defaultDenier
+	}
 	return g
 }
+
+// unresolvedPlan stands in for a missing PlanExtractor. RequireFeature and RequireSet call the extractor
+// first on every request, so it must be callable, and its answer must be the unresolved case they deny.
+func unresolvedPlan(context.Context) (entitlement.PlanID, bool) { return "", false }
 
 // Option configures a Gate.
 type Option func(*Gate)

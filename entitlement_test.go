@@ -124,3 +124,55 @@ func TestRegistry_FeaturesEnumerates(t *testing.T) {
 		t.Fatalf("Features() must enumerate the 3 registered features; got %d", got)
 	}
 }
+
+// TestNilRegistry_RefusesEveryGate: a composition root that never built its
+// registry hands the gates a nil pointer, and every question asked of it must
+// deny rather than panic inside a request.
+func TestNilRegistry_RefusesEveryGate(t *testing.T) {
+	var r *Registry
+	if _, ok := r.Get("app", "recording"); ok {
+		t.Fatal("Get on a nil registry must report no feature")
+	}
+	if _, ok := r.GetSet("app", "studio"); ok {
+		t.Fatal("GetSet on a nil registry must report no set")
+	}
+	if got := r.Features(); len(got) != 0 {
+		t.Fatalf("Features on a nil registry must be empty; got %d", len(got))
+	}
+	if r.Allowed("app", "pro", "recording") {
+		t.Fatal("Allowed on a nil registry must deny")
+	}
+	if _, ok := r.Limit("app", "pro", "recording"); ok {
+		t.Fatal("Limit on a nil registry must report no allowance")
+	}
+	if r.Available("app", "pro", "recording", true, true) {
+		t.Fatal("Available on a nil registry must deny")
+	}
+	if r.SetAvailable("app", "pro", "studio", true, true) {
+		t.Fatal("SetAvailable on a nil registry must deny")
+	}
+	// Seeding a nil registry stores nothing, so the gate still denies.
+	r.Register(Feature{Key: "recording", Namespace: "app", AllowedPlans: []PlanID{"pro"}})
+	r.RegisterSet(FeatureSet{Key: "studio", Namespace: "app", Members: []string{"recording"}})
+	if r.Allowed("app", "pro", "recording") || r.SetAvailable("app", "pro", "studio", true, true) {
+		t.Fatal("a nil registry must hold nothing after Register, so every gate still denies")
+	}
+}
+
+// TestZeroValueRegistry_Seeds: a Registry declared as a value rather than built
+// by NewRegistry has nil maps, and seeding it must store the rows instead of
+// panicking on the first write.
+func TestZeroValueRegistry_Seeds(t *testing.T) {
+	var r Registry
+	if r.Allowed("app", "pro", "recording") {
+		t.Fatal("an unseeded zero-value registry must deny")
+	}
+	r.Register(Feature{Key: "recording", Namespace: "app", AllowedPlans: []PlanID{"pro"}})
+	r.RegisterSet(FeatureSet{Key: "studio", Namespace: "app", Members: []string{"recording"}})
+	if !r.Allowed("app", "pro", "recording") {
+		t.Fatal("a zero-value registry must hold what was registered into it")
+	}
+	if !r.SetAvailable("app", "pro", "studio", true, true) {
+		t.Fatal("a zero-value registry must hold the set registered into it")
+	}
+}

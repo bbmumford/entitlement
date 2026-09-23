@@ -4,7 +4,9 @@ package entitlement
 // "does the plan include this feature?" (boolean, set-membership); Limit answers "what is the plan's
 // numeric cap?"; Available composes the full access decision flag ∧ plan ∧ invite for a staged,
 // invite-gateable surface. EVERY gate FAILS CLOSED — an unregistered feature or an unlisted plan denies,
-// so a misconfiguration becomes a lockout that surfaces the mistake, never a silent leak.
+// so a misconfiguration becomes a lockout that surfaces the mistake, never a silent leak. Each gate reads
+// the registry only through Get or GetSet, which answer "absent" on a nil registry, so an unbuilt
+// registry denies every question here rather than panicking.
 
 // Allowed reports whether plan is entitled to the feature — the boolean gate. Fail-closed: an
 // unregistered feature or a plan absent from AllowedPlans denies.
