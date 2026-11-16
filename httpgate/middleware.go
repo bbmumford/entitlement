@@ -127,6 +127,35 @@ func (g *Gate) RequireFeature(ns entitlement.Namespace, key string) func(http.Ha
 	}
 }
 
+// RequireFeatureParam returns middleware that admits a request only when the feature is Available to the
+// caller's plan, as RequireFeature, and the plan's row lists value for the key's parameter param
+// (Registry.AllowedParam). The refusal names the key with its value, key(value), the spelling a plan
+// row's parameter takes. An unresolved plan, an unregistered feature or an undeclared value denies.
+func (g *Gate) RequireFeatureParam(ns entitlement.Namespace, key, param, value string) func(http.Handler) http.Handler {
+	named := key + "(" + value + ")"
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			plan, ok := g.extract(r.Context())
+			if !ok {
+				g.denier(w, r, ns, named)
+				return
+			}
+			f, found := g.reg.Get(ns, key)
+			if !found {
+				g.denier(w, r, ns, named)
+				return
+			}
+			flagOn := g.resolveFlag(r.Context(), f.Flag)
+			invited := g.resolveInvite(r.Context(), key)
+			if !g.reg.Available(ns, plan, key, flagOn, invited) || !g.reg.AllowedParam(ns, plan, key, param, value) {
+				g.denier(w, r, ns, named)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireSet returns middleware gating a whole surface by a FeatureSet: the set's release flag, the
 // caller's invite and the plan's membership must all admit. An unresolved plan or unregistered set denies.
 func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Handler) http.Handler {

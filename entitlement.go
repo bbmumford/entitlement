@@ -32,6 +32,8 @@ type Meta struct {
 //   - Limit is the OPTIONAL numeric entitlement: a per-plan cap, -1 = unlimited, nil = no numeric axis.
 //   - Flag is the OPTIONAL release-flag key: empty = always on; non-empty = the surface stays dark until
 //     the caller's flag resolver reports it on (Available ANDs it in).
+//   - Params are the OPTIONAL named parameters the key carries: each lists, per plan, what the plan may
+//     do within the key (AllowedParam, ParamLimit). A gate that asks for the key alone reads none of them.
 type Feature struct {
 	Key          string           `json:"key"`
 	Namespace    Namespace        `json:"namespace"`
@@ -39,6 +41,17 @@ type Feature struct {
 	Limit        map[PlanID]int64 `json:"limit,omitempty"`
 	Flag         string           `json:"flag,omitempty"`
 	Display      Meta             `json:"display,omitempty"`
+	Params       map[string]Param `json:"params,omitempty"`
+}
+
+// Param is one named parameter of a feature key. A parameter is a set or a count, never both:
+//   - Values declares the values the parameter admits at all, and Plans lists, per plan, the values that
+//     plan allows, each one of Values; a plan absent from Plans allows none.
+//   - Limit is a count, per plan, in Feature.Limit's shape: -1 = unlimited, a plan absent = no allowance.
+type Param struct {
+	Values []string            `json:"values,omitempty"`
+	Plans  map[PlanID][]string `json:"plans,omitempty"`
+	Limit  map[PlanID]int64    `json:"limit,omitempty"`
 }
 
 // FeatureSet is a named bundle of feature keys a surface requires as a unit. RequireAll = satisfied only
