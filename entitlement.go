@@ -85,6 +85,7 @@ type Registry struct {
 	mu       sync.RWMutex
 	features map[featureKey]Feature
 	sets     map[featureKey]FeatureSet
+	plans    map[Namespace]PlanValidator
 }
 
 // NewRegistry returns an empty registry ready to seed.
