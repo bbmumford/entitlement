@@ -62,14 +62,18 @@ func (r *Registry) Available(ns Namespace, plan PlanID, key string, flagOn, invi
 // SetAvailable resolves a FeatureSet: a whole surface unlocks as a unit. flagOn/invited apply to the SET
 // as a surface (the caller resolves them). Member entitlement is per-member Allowed: RequireAll => every
 // member must be allowed; otherwise ANY allowed member suffices. Fail-closed: an unregistered set, a
-// false flag/invite, a RequireAll set with any denied member, or an any-mode set with no allowed member
-// => false.
+// false flag/invite, a set with no members, a RequireAll set with any denied member, or an any-mode set
+// with no allowed member => false. A set with no members entitles no plan in either mode: "every member
+// allowed" holds vacuously for an empty RequireAll set, which would otherwise open it to every plan.
 func (r *Registry) SetAvailable(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) bool {
 	s, ok := r.GetSet(ns, setKey)
 	if !ok {
 		return false
 	}
 	if !invited || !flagOn {
+		return false
+	}
+	if len(s.Members) == 0 {
 		return false
 	}
 	anyAllowed := false
