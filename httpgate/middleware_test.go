@@ -51,8 +51,8 @@ func TestRequireFeature_AdmitsEntitledDeniesOthers(t *testing.T) {
 func TestRequireFeature_FlaggedFeatureDarkWithoutResolver(t *testing.T) {
 	// a flagged feature with NO flag resolver stays dark (fail-closed) even for an entitled plan
 	g := NewGate(seededReg(), entitlement.ExtractPlan)
-	if code := serve(t, g.RequireFeature("app", "beta"), entitlement.WithPlan(context.Background(), "pro")); code != http.StatusForbidden {
-		t.Fatalf("a flagged feature with no resolver must be dark (403); got %d", code)
+	if code := serve(t, g.RequireFeature("app", "beta"), entitlement.WithPlan(context.Background(), "pro")); code != http.StatusNotFound {
+		t.Fatalf("a flagged feature with no resolver must be dark (404); got %d", code)
 	}
 	// with a resolver returning true, it opens
 	gOn := NewGate(seededReg(), entitlement.ExtractPlan, WithFlagResolver(func(context.Context, string) bool { return true }))

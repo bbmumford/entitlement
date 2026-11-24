@@ -46,17 +46,48 @@ func (r *Registry) Limit(ns Namespace, plan PlanID, key string) (int64, bool) {
 //
 // Fail-closed: an unregistered feature => false before any AND.
 func (r *Registry) Available(ns Namespace, plan PlanID, key string, flagOn, invited bool) bool {
+	return r.Decide(ns, plan, key, flagOn, invited) == ReasonNone
+}
+
+// Reason names why a gate refused. A gate's refusals are distinguishable by it, so a caller can render
+// each its own way: a plan that lacks a feature sells an upgrade, a dark feature stays hidden, a missing
+// invite reassures, an unresolved plan is a fault of the caller's session.
+type Reason string
+
+const (
+	// ReasonNone is no refusal: the feature or set is available.
+	ReasonNone Reason = ""
+	// ReasonUnregistered: no feature or set is registered under the key.
+	ReasonUnregistered Reason = "unregistered"
+	// ReasonDark: the key is registered but its release flag is not on; it exists and is unreleased.
+	ReasonDark Reason = "dark"
+	// ReasonPlanGated: the plan does not include the feature, or not every (any) member of the set.
+	ReasonPlanGated Reason = "plan_gated"
+	// ReasonNotInvited: the caller has not passed the surface's invite gate.
+	ReasonNotInvited Reason = "not_invited"
+	// ReasonPlanUnresolved: no plan was resolved for the caller. The registry never answers it (it is
+	// handed a plan); a gate that resolves the plan itself answers it before asking the registry.
+	ReasonPlanUnresolved Reason = "plan_unresolved"
+)
+
+// Decide is Available with the reason for a refusal: ReasonNone when the feature is available, else the
+// first gate that refused, in the order unregistered, dark (flag), plan, invite. Checking the flag before
+// the plan keeps a dark feature hidden from a plan that lacks it as well.
+func (r *Registry) Decide(ns Namespace, plan PlanID, key string, flagOn, invited bool) Reason {
 	f, ok := r.Get(ns, key)
 	if !ok {
-		return false
+		return ReasonUnregistered
 	}
 	if f.Flag != "" && !flagOn {
-		return false // flag gate: dark until the release flag resolves on
+		return ReasonDark // flag gate: dark until the release flag resolves on
 	}
 	if !r.Allowed(ns, plan, key) {
-		return false // plan gate
+		return ReasonPlanGated // plan gate
 	}
-	return invited // invite gate (caller-resolved; true when the surface isn't invite-gated)
+	if !invited {
+		return ReasonNotInvited // invite gate (caller-resolved; true when the surface isn't invite-gated)
+	}
+	return ReasonNone
 }
 
 // SetAvailable resolves a FeatureSet: a whole surface unlocks as a unit. flagOn/invited apply to the SET
@@ -66,28 +97,37 @@ func (r *Registry) Available(ns Namespace, plan PlanID, key string, flagOn, invi
 // with no allowed member => false. A set with no members entitles no plan in either mode: "every member
 // allowed" holds vacuously for an empty RequireAll set, which would otherwise open it to every plan.
 func (r *Registry) SetAvailable(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) bool {
+	return r.DecideSet(ns, plan, setKey, flagOn, invited) == ReasonNone
+}
+
+// DecideSet is SetAvailable with the reason for a refusal, in Decide's order: unregistered, dark (the
+// set's flag), plan (the members), invite.
+func (r *Registry) DecideSet(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) Reason {
 	s, ok := r.GetSet(ns, setKey)
 	if !ok {
-		return false
+		return ReasonUnregistered
 	}
-	if !invited || !flagOn {
-		return false
+	if !flagOn {
+		return ReasonDark
 	}
 	if len(s.Members) == 0 {
-		return false
+		return ReasonPlanGated
 	}
 	anyAllowed := false
 	for _, m := range s.Members {
 		allowed := r.Allowed(ns, plan, m)
 		if s.RequireAll && !allowed {
-			return false // one denied member fails an all-required set
+			return ReasonPlanGated // one denied member fails an all-required set
 		}
 		if allowed {
 			anyAllowed = true
 		}
 	}
-	if s.RequireAll {
-		return true // reached here => every member allowed
+	if !s.RequireAll && !anyAllowed {
+		return ReasonPlanGated
 	}
-	return anyAllowed
+	if !invited {
+		return ReasonNotInvited
+	}
+	return ReasonNone
 }

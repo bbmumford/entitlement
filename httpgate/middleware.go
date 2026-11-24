@@ -7,6 +7,7 @@ package httpgate
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/bbmumford/entitlement"
@@ -27,12 +28,48 @@ type FlagResolver func(ctx context.Context, flagKey string) bool
 // "invited", so a plan-locked-only surface omits it.
 type InviteResolver func(ctx context.Context, featureKey string) bool
 
-// Denier renders the 403 body. A consumer may override it (WithDenier) to match its own error envelope;
-// the default writes a minimal 403.
+// Denier renders a refusal knowing only what was refused. A consumer installs one with WithDenier to
+// match its own error envelope; a RefusalDenier, which is also told why, takes precedence.
 type Denier func(w http.ResponseWriter, r *http.Request, ns entitlement.Namespace, key string)
 
-func defaultDenier(w http.ResponseWriter, _ *http.Request, _ entitlement.Namespace, _ string) {
-	http.Error(w, "feature not included in your plan", http.StatusForbidden)
+// Refusal is one refusal of a gate: what was refused and why. Key is the feature or set key, or for
+// RequireFeatureParam the key with its value, key(value). UpgradeURL is the refused feature's
+// Display.UpgradeURL, when the refusal is ReasonPlanGated and the feature names one.
+type Refusal struct {
+	Namespace  entitlement.Namespace
+	Key        string
+	Reason     entitlement.Reason
+	UpgradeURL string
+}
+
+// RefusalDenier renders a refusal with its reason (WithRefusalDenier).
+type RefusalDenier func(w http.ResponseWriter, r *http.Request, refusal Refusal)
+
+// DefaultRefusalDenier is the gate's renderer when the consumer installs none: each reason has its own
+// response, so a client can tell them apart. A dark feature answers 404 not_found, hidden as if absent;
+// a plan that lacks it answers 403 feature_required with the feature and its upgrade URL; a missing
+// invite answers 403 not_invited; an unresolved plan answers 403 plan_unresolved; an unregistered key
+// answers 403 not_registered. Bodies are JSON objects whose error field carries the code.
+func DefaultRefusalDenier(w http.ResponseWriter, _ *http.Request, refusal Refusal) {
+	status, body := http.StatusForbidden, map[string]string{}
+	switch refusal.Reason {
+	case entitlement.ReasonDark:
+		status, body["error"] = http.StatusNotFound, "not_found"
+	case entitlement.ReasonPlanGated:
+		body["error"], body["feature"] = "feature_required", refusal.Key
+		if refusal.UpgradeURL != "" {
+			body["upgradeUrl"] = refusal.UpgradeURL
+		}
+	case entitlement.ReasonNotInvited:
+		body["error"] = "not_invited"
+	case entitlement.ReasonPlanUnresolved:
+		body["error"] = "plan_unresolved"
+	default:
+		body["error"] = "not_registered"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // Gate wires the entitlement registry to the injected request seams and produces middleware. Build one
@@ -43,26 +80,43 @@ type Gate struct {
 	flag    FlagResolver
 	invite  InviteResolver
 	denier  Denier
+	refuse  RefusalDenier
 }
 
 // NewGate builds a Gate. reg and extract are required, and a missing one refuses rather than panics:
 // a nil registry reports every feature and set unregistered, so each request is denied; a nil extractor
 // is replaced by one that never resolves a plan, so each request is denied. That is safe and useless,
 // which is what an unwired gate should be. flag/invite/denier are optional: a nil flag resolver darks
-// any FLAGGED feature (fail-closed); a nil invite resolver treats every surface as invited; a nil denier,
-// including one passed through WithDenier, uses the default 403.
+// any FLAGGED feature (fail-closed); a nil invite resolver treats every surface as invited; with neither
+// a Denier nor a RefusalDenier (a nil one passed counts as none), DefaultRefusalDenier renders.
 func NewGate(reg *entitlement.Registry, extract PlanExtractor, opts ...Option) *Gate {
-	g := &Gate{reg: reg, extract: extract, denier: defaultDenier}
+	g := &Gate{reg: reg, extract: extract}
 	for _, o := range opts {
 		o(g)
 	}
 	if g.extract == nil {
 		g.extract = unresolvedPlan
 	}
-	if g.denier == nil {
-		g.denier = defaultDenier
+	if g.refuse == nil && g.denier == nil {
+		g.refuse = DefaultRefusalDenier
 	}
 	return g
+}
+
+// deny renders one refusal: through the RefusalDenier when one is installed (the default included),
+// else through the consumer's Denier, which is told what was refused but not why.
+func (g *Gate) deny(w http.ResponseWriter, r *http.Request, refusal Refusal) {
+	if g.refuse != nil {
+		g.refuse(w, r, refusal)
+		return
+	}
+	g.denier(w, r, refusal.Namespace, refusal.Key)
+}
+
+// planGated builds the refusal of a plan that lacks the feature key, carrying the feature's upgrade URL.
+func (g *Gate) planGated(ns entitlement.Namespace, named, key string) Refusal {
+	f, _ := g.reg.Get(ns, key)
+	return Refusal{Namespace: ns, Key: named, Reason: entitlement.ReasonPlanGated, UpgradeURL: f.Display.UpgradeURL}
 }
 
 // unresolvedPlan stands in for a missing PlanExtractor. RequireFeature and RequireSet call the extractor
@@ -78,8 +132,13 @@ func WithFlagResolver(f FlagResolver) Option { return func(g *Gate) { g.flag = f
 // WithInviteResolver injects the invite-gate seam.
 func WithInviteResolver(i InviteResolver) Option { return func(g *Gate) { g.invite = i } }
 
-// WithDenier overrides the 403 renderer.
+// WithDenier installs a renderer that is told what was refused but not why. It renders only when no
+// RefusalDenier is installed.
 func WithDenier(d Denier) Option { return func(g *Gate) { g.denier = d } }
+
+// WithRefusalDenier installs a renderer that is told what was refused and why; it takes precedence over
+// a Denier. A nil one leaves the choice as if it were not given.
+func WithRefusalDenier(d RefusalDenier) Option { return func(g *Gate) { g.refuse = d } }
 
 // resolveFlag reports the flag decision for a feature's or a set's release flag: an empty flag is always
 // on; a flag with no resolver stays dark.
@@ -108,18 +167,23 @@ func (g *Gate) RequireFeature(ns entitlement.Namespace, key string) func(http.Ha
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			plan, ok := g.extract(r.Context())
 			if !ok {
-				g.denier(w, r, ns, key)
+				g.deny(w, r, Refusal{Namespace: ns, Key: key, Reason: entitlement.ReasonPlanUnresolved})
 				return
 			}
 			f, found := g.reg.Get(ns, key)
 			if !found {
-				g.denier(w, r, ns, key)
+				g.deny(w, r, Refusal{Namespace: ns, Key: key, Reason: entitlement.ReasonUnregistered})
 				return
 			}
 			flagOn := g.resolveFlag(r.Context(), f.Flag)
 			invited := g.resolveInvite(r.Context(), key)
-			if !g.reg.Available(ns, plan, key, flagOn, invited) {
-				g.denier(w, r, ns, key)
+			switch reason := g.reg.Decide(ns, plan, key, flagOn, invited); reason {
+			case entitlement.ReasonNone:
+			case entitlement.ReasonPlanGated:
+				g.deny(w, r, g.planGated(ns, key, key))
+				return
+			default:
+				g.deny(w, r, Refusal{Namespace: ns, Key: key, Reason: reason})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -137,18 +201,27 @@ func (g *Gate) RequireFeatureParam(ns entitlement.Namespace, key, param, value s
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			plan, ok := g.extract(r.Context())
 			if !ok {
-				g.denier(w, r, ns, named)
+				g.deny(w, r, Refusal{Namespace: ns, Key: named, Reason: entitlement.ReasonPlanUnresolved})
 				return
 			}
 			f, found := g.reg.Get(ns, key)
 			if !found {
-				g.denier(w, r, ns, named)
+				g.deny(w, r, Refusal{Namespace: ns, Key: named, Reason: entitlement.ReasonUnregistered})
 				return
 			}
 			flagOn := g.resolveFlag(r.Context(), f.Flag)
 			invited := g.resolveInvite(r.Context(), key)
-			if !g.reg.Available(ns, plan, key, flagOn, invited) || !g.reg.AllowedParam(ns, plan, key, param, value) {
-				g.denier(w, r, ns, named)
+			reason := g.reg.Decide(ns, plan, key, flagOn, invited)
+			if reason == entitlement.ReasonNone && !g.reg.AllowedParam(ns, plan, key, param, value) {
+				reason = entitlement.ReasonPlanGated // the plan's row lacks this value of the parameter
+			}
+			switch reason {
+			case entitlement.ReasonNone:
+			case entitlement.ReasonPlanGated:
+				g.deny(w, r, g.planGated(ns, named, key))
+				return
+			default:
+				g.deny(w, r, Refusal{Namespace: ns, Key: named, Reason: reason})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -163,18 +236,18 @@ func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			plan, ok := g.extract(r.Context())
 			if !ok {
-				g.denier(w, r, ns, setKey)
+				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonPlanUnresolved})
 				return
 			}
 			set, found := g.reg.GetSet(ns, setKey)
 			if !found {
-				g.denier(w, r, ns, setKey)
+				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonUnregistered})
 				return
 			}
 			flagOn := g.resolveFlag(r.Context(), set.Flag)
 			invited := g.resolveInvite(r.Context(), setKey)
-			if !g.reg.SetAvailable(ns, plan, setKey, flagOn, invited) {
-				g.denier(w, r, ns, setKey)
+			if reason := g.reg.DecideSet(ns, plan, setKey, flagOn, invited); reason != entitlement.ReasonNone {
+				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: reason})
 				return
 			}
 			next.ServeHTTP(w, r)

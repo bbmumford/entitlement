@@ -26,10 +26,10 @@ func TestRequireSet_FlagHoldsTheWholeSurfaceDark(t *testing.T) {
 	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan).RequireSet("app", "open_surface"), pro); code != http.StatusOK {
 		t.Fatalf("a flagless set with no resolver must admit an entitled plan; got %d", code)
 	}
-	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan).RequireSet("app", "staged_surface"), pro); code != http.StatusForbidden {
+	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan).RequireSet("app", "staged_surface"), pro); code != http.StatusNotFound {
 		t.Fatalf("a flagged set with no resolver must stay dark; got %d", code)
 	}
-	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan, off).RequireSet("app", "staged_surface"), pro); code != http.StatusForbidden {
+	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan, off).RequireSet("app", "staged_surface"), pro); code != http.StatusNotFound {
 		t.Fatalf("a flagged set whose flag is off must deny; got %d", code)
 	}
 	if code := serve(t, NewGate(setReg(), entitlement.ExtractPlan, on).RequireSet("app", "staged_surface"), pro); code != http.StatusOK {
