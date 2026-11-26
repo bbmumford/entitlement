@@ -17,12 +17,19 @@ var ErrInvalidParam = errors.New("entitlement: invalid feature parameter")
 
 // Validate checks f's parameters, so a seed is refused before it is served: a parameter with no name,
 // one that is both a set and a count or neither, a plan's value its parameter does not declare, and a
-// plan named by a parameter but absent from AllowedPlans (a parameter never widens the key itself).
+// plan named by a parameter but absent from AllowedPlans (a parameter never widens the key itself), and
+// a count below -1 in the key's Limit or a parameter's (-1 is unlimited, 0 and up a count; anything
+// lower is neither, and a gate comparing usage against it would answer as if it were a cap).
 // Registering does not call it; the composition root that builds a seed does, before Register.
 func (f Feature) Validate() error {
 	allowed := make(map[PlanID]bool, len(f.AllowedPlans))
 	for _, p := range f.AllowedPlans {
 		allowed[p] = true
+	}
+	for plan, n := range f.Limit {
+		if n < -1 {
+			return fmt.Errorf("%w: %s gives plan %q the count %d (want -1 for unlimited, or 0 and up)", ErrInvalidParam, f.Key, plan, n)
+		}
 	}
 	for name, p := range f.Params {
 		if name == "" {
@@ -49,9 +56,12 @@ func (f Feature) Validate() error {
 				}
 			}
 		}
-		for plan := range p.Limit {
+		for plan, n := range p.Limit {
 			if !allowed[plan] {
 				return fmt.Errorf("%w: %s(%s) counts plan %q, which does not hold %s", ErrInvalidParam, f.Key, name, plan, f.Key)
+			}
+			if n < -1 {
+				return fmt.Errorf("%w: %s(%s) gives plan %q the count %d (want -1 for unlimited, or 0 and up)", ErrInvalidParam, f.Key, name, plan, n)
 			}
 		}
 	}
