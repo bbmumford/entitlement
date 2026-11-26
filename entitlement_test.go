@@ -102,8 +102,9 @@ func TestSetAvailable_RequireAllVsAny(t *testing.T) {
 	if r.SetAvailable("app", "enterprise", "nope", true, true) {
 		t.Fatal("an unregistered set must deny")
 	}
-	if r.SetAvailable("app", "enterprise", "studio", false, true) || r.SetAvailable("app", "enterprise", "studio", true, false) {
-		t.Fatal("a false flag or invite must deny the set")
+	r.RegisterSet(FeatureSet{Key: "staged", Namespace: "app", Members: []string{"recording", "research"}, RequireAll: true, Flag: "staged_release"})
+	if r.SetAvailable("app", "enterprise", "staged", false, true) || r.SetAvailable("app", "enterprise", "studio", true, false) {
+		t.Fatal("a false flag on a flagged set, or a false invite, must deny the set")
 	}
 }
 

@@ -33,6 +33,7 @@ func TestDecideNamesTheRefusingGate(t *testing.T) {
 		}
 	}
 	r.RegisterSet(FeatureSet{Key: "empty", Namespace: "app", RequireAll: true})
+	r.RegisterSet(FeatureSet{Key: "staged", Namespace: "app", Members: []string{"recording", "research"}, RequireAll: true, Flag: "staged_release"})
 	sets := []struct {
 		name            string
 		key             string
@@ -41,7 +42,8 @@ func TestDecideNamesTheRefusingGate(t *testing.T) {
 		want            Reason
 	}{
 		{"unregistered set", "nope", "enterprise", true, true, ReasonUnregistered},
-		{"dark set", "studio", "enterprise", false, true, ReasonDark},
+		{"dark set", "staged", "enterprise", false, true, ReasonDark},
+		{"flagless set ignores flagOn", "studio", "enterprise", false, true, ReasonNone},
 		{"require-all lacks a member", "studio", "pro", true, true, ReasonPlanGated},
 		{"any-mode lacks every member", "any_tool", "starter", true, true, ReasonPlanGated},
 		{"empty set", "empty", "enterprise", true, true, ReasonPlanGated},

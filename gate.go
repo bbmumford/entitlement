@@ -91,11 +91,13 @@ func (r *Registry) Decide(ns Namespace, plan PlanID, key string, flagOn, invited
 }
 
 // SetAvailable resolves a FeatureSet: a whole surface unlocks as a unit. flagOn/invited apply to the SET
-// as a surface (the caller resolves them). Member entitlement is per-member Allowed: RequireAll => every
+// as a surface (the caller resolves them; flagOn answers the set's Flag). Member entitlement is per-member Allowed: RequireAll => every
 // member must be allowed; otherwise ANY allowed member suffices. Fail-closed: an unregistered set, a
 // false flag/invite, a set with no members, a RequireAll set with any denied member, or an any-mode set
 // with no allowed member => false. A set with no members entitles no plan in either mode: "every member
-// allowed" holds vacuously for an empty RequireAll set, which would otherwise open it to every plan.
+// allowed" holds vacuously for an empty RequireAll set, which would otherwise open it to every plan. A
+// set with no Flag is on whatever flagOn says, as a feature with no Flag is, so a mis-passed false
+// cannot dark it.
 func (r *Registry) SetAvailable(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) bool {
 	return r.DecideSet(ns, plan, setKey, flagOn, invited) == ReasonNone
 }
@@ -107,8 +109,8 @@ func (r *Registry) DecideSet(ns Namespace, plan PlanID, setKey string, flagOn, i
 	if !ok {
 		return ReasonUnregistered
 	}
-	if !flagOn {
-		return ReasonDark
+	if s.Flag != "" && !flagOn {
+		return ReasonDark // flag gate: a set with no flag is on, as a feature with no flag is
 	}
 	if len(s.Members) == 0 {
 		return ReasonPlanGated
