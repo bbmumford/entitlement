@@ -24,8 +24,10 @@ type PlanExtractor func(context.Context) (entitlement.PlanID, bool)
 // stays DARK (fail-closed) — a dark feature must not become reachable because the flag seam was unwired.
 type FlagResolver func(ctx context.Context, flagKey string) bool
 
-// InviteResolver reports whether the caller passes a surface's invite gate. A nil resolver is treated as
-// "invited", so a plan-locked-only surface omits it.
+// InviteResolver reports whether the caller passes a surface's invite gate. With a nil resolver a
+// feature or set not marked InviteOnly is not invite-gated, so a plan-locked-only surface omits it,
+// and one marked InviteOnly admits nobody: an invite-only surface whose resolver was never wired
+// fails closed rather than opening to every entitled plan.
 type InviteResolver func(ctx context.Context, featureKey string) bool
 
 // Denier renders a refusal knowing only what was refused. A consumer installs one with WithDenier to
@@ -87,7 +89,8 @@ type Gate struct {
 // a nil registry reports every feature and set unregistered, so each request is denied; a nil extractor
 // is replaced by one that never resolves a plan, so each request is denied. That is safe and useless,
 // which is what an unwired gate should be. flag/invite/denier are optional: a nil flag resolver darks
-// any FLAGGED feature (fail-closed); a nil invite resolver treats every surface as invited; with neither
+// any FLAGGED feature (fail-closed); a nil invite resolver admits no one to an InviteOnly feature or set
+// (fail-closed) and gates no other on invites; with neither
 // a Denier nor a RefusalDenier (a nil one passed counts as none), DefaultRefusalDenier renders.
 func NewGate(reg *entitlement.Registry, extract PlanExtractor, opts ...Option) *Gate {
 	g := &Gate{reg: reg, extract: extract}
@@ -152,9 +155,11 @@ func (g *Gate) resolveFlag(ctx context.Context, flag string) bool {
 	return g.flag(ctx, flag)
 }
 
-func (g *Gate) resolveInvite(ctx context.Context, key string) bool {
+// resolveInvite reports the invite decision for a feature or set key: the InviteResolver's answer when
+// one is wired, else invited exactly when the record is not InviteOnly.
+func (g *Gate) resolveInvite(ctx context.Context, key string, inviteOnly bool) bool {
 	if g.invite == nil {
-		return true
+		return !inviteOnly
 	}
 	return g.invite(ctx, key)
 }
@@ -176,7 +181,7 @@ func (g *Gate) RequireFeature(ns entitlement.Namespace, key string) func(http.Ha
 				return
 			}
 			flagOn := g.resolveFlag(r.Context(), f.Flag)
-			invited := g.resolveInvite(r.Context(), key)
+			invited := g.resolveInvite(r.Context(), key, f.InviteOnly)
 			switch reason := g.reg.Decide(ns, plan, key, flagOn, invited); reason {
 			case entitlement.ReasonNone:
 			case entitlement.ReasonPlanGated:
@@ -210,7 +215,7 @@ func (g *Gate) RequireFeatureParam(ns entitlement.Namespace, key, param, value s
 				return
 			}
 			flagOn := g.resolveFlag(r.Context(), f.Flag)
-			invited := g.resolveInvite(r.Context(), key)
+			invited := g.resolveInvite(r.Context(), key, f.InviteOnly)
 			reason := g.reg.Decide(ns, plan, key, flagOn, invited)
 			if reason == entitlement.ReasonNone && !g.reg.AllowedParam(ns, plan, key, param, value) {
 				reason = entitlement.ReasonPlanGated // the plan's row lacks this value of the parameter
@@ -241,13 +246,13 @@ func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Han
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonPlanUnresolved})
 				return
 			}
-			_, found := g.reg.GetSet(ns, setKey)
+			set, found := g.reg.GetSet(ns, setKey)
 			if !found {
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonUnregistered})
 				return
 			}
 			flagOn := func(flag string) bool { return g.resolveFlag(r.Context(), flag) }
-			invited := g.resolveInvite(r.Context(), setKey)
+			invited := g.resolveInvite(r.Context(), setKey, set.InviteOnly)
 			if reason := g.reg.DecideSetFlags(ns, plan, setKey, flagOn, invited); reason != entitlement.ReasonNone {
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: reason})
 				return

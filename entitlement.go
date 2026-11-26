@@ -34,6 +34,8 @@ type Meta struct {
 //     the caller's flag resolver reports it on (Available ANDs it in).
 //   - Params are the OPTIONAL named parameters the key carries: each lists, per plan, what the plan may
 //     do within the key (AllowedParam, ParamLimit). A gate that asks for the key alone reads none of them.
+//   - InviteOnly marks a surface that is plan-locked AND invite-only: a gate with no invite resolver
+//     admits no one to it, where an unmarked key is not invite-gated at all.
 type Feature struct {
 	Key          string           `json:"key"`
 	Namespace    Namespace        `json:"namespace"`
@@ -42,6 +44,7 @@ type Feature struct {
 	Flag         string           `json:"flag,omitempty"`
 	Display      Meta             `json:"display,omitempty"`
 	Params       map[string]Param `json:"params,omitempty"`
+	InviteOnly   bool             `json:"inviteOnly,omitempty"`
 }
 
 // Param is one named parameter of a feature key. A parameter is a set or a count, never both:
@@ -57,13 +60,15 @@ type Param struct {
 // FeatureSet is a named bundle of feature keys a surface requires as a unit. RequireAll = satisfied only
 // when EVERY member is allowed; otherwise ANY allowed member satisfies it. Flag is the OPTIONAL release
 // flag for the whole surface, with the same rule as Feature.Flag: empty = always on; non-empty = dark
-// until the caller's flag resolver reports it on.
+// until the caller's flag resolver reports it on. InviteOnly marks the surface invite-only, with
+// Feature.InviteOnly's rule.
 type FeatureSet struct {
 	Key        string    `json:"key"`
 	Namespace  Namespace `json:"namespace"`
 	Members    []string  `json:"members"`
 	RequireAll bool      `json:"require_all"`
 	Flag       string    `json:"flag,omitempty"`
+	InviteOnly bool      `json:"inviteOnly,omitempty"`
 }
 
 // featureKey namespaces the registry by (Namespace, Key).
