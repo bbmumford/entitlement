@@ -112,7 +112,7 @@ func (r *Registry) Register(f Feature) {
 	if r.features == nil {
 		r.features = map[featureKey]Feature{}
 	}
-	r.features[featureKey{f.Namespace, f.Key}] = f
+	r.features[featureKey{f.Namespace, f.Key}] = f.clone()
 }
 
 // RegisterSet adds or replaces a feature set. On a nil registry it stores nothing, as Register.
@@ -125,11 +125,28 @@ func (r *Registry) RegisterSet(s FeatureSet) {
 	if r.sets == nil {
 		r.sets = map[featureKey]FeatureSet{}
 	}
-	r.sets[featureKey{s.Namespace, s.Key}] = s
+	r.sets[featureKey{s.Namespace, s.Key}] = s.clone()
 }
 
-// Get returns a registered feature and whether it exists. A nil registry holds no feature.
+// Get returns a copy of a registered feature and whether it exists. A nil registry holds no feature.
+// The copy shares no slice or map with the registry, so a caller that edits AllowedPlans, Limit or
+// Params on it changes nothing the gates read.
 func (r *Registry) Get(ns Namespace, key string) (Feature, bool) {
+	f, ok := r.get(ns, key)
+	return f.clone(), ok
+}
+
+// GetSet returns a copy of a registered feature set and whether it exists, sharing no slice with the
+// registry, as Get. A nil registry holds no set.
+func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
+	s, ok := r.getSet(ns, key)
+	return s.clone(), ok
+}
+
+// get is the stored feature itself, for the gates in this package, which only read it: Register
+// stores a copy and replaces an entry whole, so nothing outside the registry holds its slices and
+// maps, and reading them after the lock is released races no write.
+func (r *Registry) get(ns Namespace, key string) (Feature, bool) {
 	if r == nil {
 		return Feature{}, false
 	}
@@ -139,8 +156,8 @@ func (r *Registry) Get(ns Namespace, key string) (Feature, bool) {
 	return f, ok
 }
 
-// GetSet returns a registered feature set and whether it exists. A nil registry holds no set.
-func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
+// getSet is the stored feature set itself, read as get is.
+func (r *Registry) getSet(ns Namespace, key string) (FeatureSet, bool) {
 	if r == nil {
 		return FeatureSet{}, false
 	}
@@ -148,6 +165,46 @@ func (r *Registry) GetSet(ns Namespace, key string) (FeatureSet, bool) {
 	defer r.mu.RUnlock()
 	s, ok := r.sets[featureKey{ns, key}]
 	return s, ok
+}
+
+// clone is f with every slice and map copied.
+func (f Feature) clone() Feature {
+	f.AllowedPlans = append([]PlanID(nil), f.AllowedPlans...)
+	f.Limit = cloneCounts(f.Limit)
+	if f.Params != nil {
+		params := make(map[string]Param, len(f.Params))
+		for name, p := range f.Params {
+			p.Values = append([]string(nil), p.Values...)
+			if p.Plans != nil {
+				plans := make(map[PlanID][]string, len(p.Plans))
+				for plan, vs := range p.Plans {
+					plans[plan] = append([]string(nil), vs...)
+				}
+				p.Plans = plans
+			}
+			p.Limit = cloneCounts(p.Limit)
+			params[name] = p
+		}
+		f.Params = params
+	}
+	return f
+}
+
+// clone is s with its member list copied.
+func (s FeatureSet) clone() FeatureSet {
+	s.Members = append([]string(nil), s.Members...)
+	return s
+}
+
+func cloneCounts(m map[PlanID]int64) map[PlanID]int64 {
+	if m == nil {
+		return nil
+	}
+	out := make(map[PlanID]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // Features returns every registered feature (order unspecified) — the read side for a caller that needs
@@ -160,7 +217,7 @@ func (r *Registry) Features() []Feature {
 	defer r.mu.RUnlock()
 	out := make([]Feature, 0, len(r.features))
 	for _, f := range r.features {
-		out = append(out, f)
+		out = append(out, f.clone())
 	}
 	return out
 }

@@ -74,7 +74,7 @@ func (r *Registry) AllowedParam(ns Namespace, plan PlanID, key, param, value str
 	if !r.Allowed(ns, plan, key) {
 		return false
 	}
-	f, _ := r.Get(ns, key)
+	f, _ := r.get(ns, key)
 	p, ok := f.Params[param]
 	if !ok || value == "" {
 		return false
@@ -101,7 +101,7 @@ func (r *Registry) ParamLimit(ns Namespace, plan PlanID, key, param string) (int
 	if !r.Allowed(ns, plan, key) {
 		return 0, false
 	}
-	f, _ := r.Get(ns, key)
+	f, _ := r.get(ns, key)
 	p, ok := f.Params[param]
 	if !ok || p.Limit == nil {
 		return 0, false

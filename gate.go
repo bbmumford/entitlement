@@ -5,13 +5,13 @@ package entitlement
 // numeric cap?"; Available composes the full access decision flag ∧ plan ∧ invite for a staged,
 // invite-gateable surface. EVERY gate FAILS CLOSED — an unregistered feature or an unlisted plan denies,
 // so a misconfiguration becomes a lockout that surfaces the mistake, never a silent leak. Each gate reads
-// the registry only through Get or GetSet, which answer "absent" on a nil registry, so an unbuilt
+// the registry only through get or getSet, which answer "absent" on a nil registry, so an unbuilt
 // registry denies every question here rather than panicking.
 
 // Allowed reports whether plan is entitled to the feature — the boolean gate. Fail-closed: an
 // unregistered feature or a plan absent from AllowedPlans denies.
 func (r *Registry) Allowed(ns Namespace, plan PlanID, key string) bool {
-	f, ok := r.Get(ns, key)
+	f, ok := r.get(ns, key)
 	if !ok {
 		return false // unregistered key denies (never fail-open)
 	}
@@ -27,7 +27,7 @@ func (r *Registry) Allowed(ns Namespace, plan PlanID, key string) bool {
 // Fail-closed: an unregistered feature, a feature with no numeric axis, or no cap for this plan =>
 // (0, false), which a caller reads as "no allowance" (deny) rather than "unlimited".
 func (r *Registry) Limit(ns Namespace, plan PlanID, key string) (int64, bool) {
-	f, ok := r.Get(ns, key)
+	f, ok := r.get(ns, key)
 	if !ok || f.Limit == nil {
 		return 0, false
 	}
@@ -74,7 +74,7 @@ const (
 // first gate that refused, in the order unregistered, dark (flag), plan, invite. Checking the flag before
 // the plan keeps a dark feature hidden from a plan that lacks it as well.
 func (r *Registry) Decide(ns Namespace, plan PlanID, key string, flagOn, invited bool) Reason {
-	f, ok := r.Get(ns, key)
+	f, ok := r.get(ns, key)
 	if !ok {
 		return ReasonUnregistered
 	}
@@ -108,7 +108,7 @@ func (r *Registry) SetAvailable(ns Namespace, plan PlanID, setKey string, flagOn
 // DecideSet is SetAvailable with the reason for a refusal, in Decide's order: unregistered, dark (the
 // set's flag, then a member's), plan (the members), invite.
 func (r *Registry) DecideSet(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) Reason {
-	s, _ := r.GetSet(ns, setKey)
+	s, _ := r.getSet(ns, setKey)
 	return r.DecideSetFlags(ns, plan, setKey, func(flag string) bool { return flagOn && flag == s.Flag }, invited)
 }
 
@@ -118,7 +118,7 @@ func (r *Registry) DecideSet(ns Namespace, plan PlanID, setKey string, flagOn, i
 // holding one is dark, and an any-mode set is satisfied only by a member that is both released and
 // allowed, answering dark rather than plan_gated when its only allowed members are unreleased.
 func (r *Registry) DecideSetFlags(ns Namespace, plan PlanID, setKey string, flagOn func(flag string) bool, invited bool) Reason {
-	s, ok := r.GetSet(ns, setKey)
+	s, ok := r.getSet(ns, setKey)
 	if !ok {
 		return ReasonUnregistered
 	}
@@ -130,12 +130,12 @@ func (r *Registry) DecideSetFlags(ns Namespace, plan PlanID, setKey string, flag
 		return ReasonPlanGated
 	}
 	released := func(m string) bool {
-		f, ok := r.Get(ns, m)
+		f, ok := r.get(ns, m)
 		return ok && on(f.Flag)
 	}
 	if s.RequireAll {
 		for _, m := range s.Members {
-			if f, ok := r.Get(ns, m); ok && !on(f.Flag) {
+			if f, ok := r.get(ns, m); ok && !on(f.Flag) {
 				return ReasonDark // one unreleased member darks an all-required set
 			}
 		}
