@@ -229,8 +229,10 @@ func (g *Gate) RequireFeatureParam(ns entitlement.Namespace, key, param, value s
 	}
 }
 
-// RequireSet returns middleware gating a whole surface by a FeatureSet: the set's release flag, the
-// caller's invite and the plan's membership must all admit. An unresolved plan or unregistered set denies.
+// RequireSet returns middleware gating a whole surface by a FeatureSet: the set's release flag, each
+// member's release flag, the caller's invite and the plan's membership must all admit
+// (Registry.DecideSetFlags, every flag through the Gate's FlagResolver). An unresolved plan or
+// unregistered set denies.
 func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -239,14 +241,14 @@ func (g *Gate) RequireSet(ns entitlement.Namespace, setKey string) func(http.Han
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonPlanUnresolved})
 				return
 			}
-			set, found := g.reg.GetSet(ns, setKey)
+			_, found := g.reg.GetSet(ns, setKey)
 			if !found {
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: entitlement.ReasonUnregistered})
 				return
 			}
-			flagOn := g.resolveFlag(r.Context(), set.Flag)
+			flagOn := func(flag string) bool { return g.resolveFlag(r.Context(), flag) }
 			invited := g.resolveInvite(r.Context(), setKey)
-			if reason := g.reg.DecideSet(ns, plan, setKey, flagOn, invited); reason != entitlement.ReasonNone {
+			if reason := g.reg.DecideSetFlags(ns, plan, setKey, flagOn, invited); reason != entitlement.ReasonNone {
 				g.deny(w, r, Refusal{Namespace: ns, Key: setKey, Reason: reason})
 				return
 			}

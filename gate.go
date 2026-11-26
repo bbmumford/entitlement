@@ -91,42 +91,78 @@ func (r *Registry) Decide(ns Namespace, plan PlanID, key string, flagOn, invited
 }
 
 // SetAvailable resolves a FeatureSet: a whole surface unlocks as a unit. flagOn/invited apply to the SET
-// as a surface (the caller resolves them; flagOn answers the set's Flag). Member entitlement is per-member Allowed: RequireAll => every
-// member must be allowed; otherwise ANY allowed member suffices. Fail-closed: an unregistered set, a
-// false flag/invite, a set with no members, a RequireAll set with any denied member, or an any-mode set
-// with no allowed member => false. A set with no members entitles no plan in either mode: "every member
-// allowed" holds vacuously for an empty RequireAll set, which would otherwise open it to every plan. A
-// set with no Flag is on whatever flagOn says, as a feature with no Flag is, so a mis-passed false
-// cannot dark it.
+// as a surface (the caller resolves them). Member entitlement is per-member Allowed: RequireAll => every
+// member must be allowed; otherwise ANY allowed member suffices. A member carries its own release flag,
+// and a set never confers a member that flag keeps dark: flagOn answers only the set's own flag (and a
+// member's flag that is the same key), so every other flagged member is dark here, as a flagged key is
+// with no flag resolver. A caller that resolves each flag uses DecideSetFlags. Fail-closed: an
+// unregistered set, a false flag on a flagged set, a false invite, a set with no members, a RequireAll
+// set with any dark or denied member, or an any-mode set with no released allowed member => false. A
+// set with no members entitles no plan in either mode: "every member allowed" holds vacuously for an
+// empty RequireAll set, which would otherwise open it to every plan. A set with no Flag is on whatever
+// flagOn says, as a feature with no Flag is.
 func (r *Registry) SetAvailable(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) bool {
 	return r.DecideSet(ns, plan, setKey, flagOn, invited) == ReasonNone
 }
 
 // DecideSet is SetAvailable with the reason for a refusal, in Decide's order: unregistered, dark (the
-// set's flag), plan (the members), invite.
+// set's flag, then a member's), plan (the members), invite.
 func (r *Registry) DecideSet(ns Namespace, plan PlanID, setKey string, flagOn, invited bool) Reason {
+	s, _ := r.GetSet(ns, setKey)
+	return r.DecideSetFlags(ns, plan, setKey, func(flag string) bool { return flagOn && flag == s.Flag }, invited)
+}
+
+// DecideSetFlags is DecideSet with every release flag the decision reads resolved by flagOn: the set's
+// own and each member's. An empty flag is on without asking flagOn, and a nil flagOn leaves every flagged
+// set and member dark. A member whose flag is off is never conferred through the set: a RequireAll set
+// holding one is dark, and an any-mode set is satisfied only by a member that is both released and
+// allowed, answering dark rather than plan_gated when its only allowed members are unreleased.
+func (r *Registry) DecideSetFlags(ns Namespace, plan PlanID, setKey string, flagOn func(flag string) bool, invited bool) Reason {
 	s, ok := r.GetSet(ns, setKey)
 	if !ok {
 		return ReasonUnregistered
 	}
-	if s.Flag != "" && !flagOn {
-		return ReasonDark // flag gate: a set with no flag is on, as a feature with no flag is
+	on := func(flag string) bool { return flag == "" || (flagOn != nil && flagOn(flag)) }
+	if !on(s.Flag) {
+		return ReasonDark
 	}
 	if len(s.Members) == 0 {
 		return ReasonPlanGated
 	}
-	anyAllowed := false
-	for _, m := range s.Members {
-		allowed := r.Allowed(ns, plan, m)
-		if s.RequireAll && !allowed {
-			return ReasonPlanGated // one denied member fails an all-required set
-		}
-		if allowed {
-			anyAllowed = true
-		}
+	released := func(m string) bool {
+		f, ok := r.Get(ns, m)
+		return ok && on(f.Flag)
 	}
-	if !s.RequireAll && !anyAllowed {
-		return ReasonPlanGated
+	if s.RequireAll {
+		for _, m := range s.Members {
+			if f, ok := r.Get(ns, m); ok && !on(f.Flag) {
+				return ReasonDark // one unreleased member darks an all-required set
+			}
+		}
+		for _, m := range s.Members {
+			if !r.Allowed(ns, plan, m) {
+				return ReasonPlanGated // one denied member fails an all-required set
+			}
+		}
+	} else {
+		usable, darkOnly := false, false
+		for _, m := range s.Members {
+			if !r.Allowed(ns, plan, m) {
+				continue
+			}
+			if released(m) {
+				usable = true
+				break
+			}
+			darkOnly = true
+		}
+		switch {
+		case usable:
+		case darkOnly:
+			return ReasonDark
+		default:
+			return ReasonPlanGated
+		}
 	}
 	if !invited {
 		return ReasonNotInvited
