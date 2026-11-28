@@ -29,10 +29,11 @@ type PlanExtractor func(context.Context) (entitlement.PlanID, bool)
 // stays DARK (fail-closed) — a dark feature must not become reachable because the flag seam was unwired.
 type FlagResolver func(ctx context.Context, flagKey string) bool
 
-// InviteResolver reports whether the caller passes a surface's invite gate. With a nil resolver a
-// feature or set not marked InviteOnly is not invite-gated, so a plan-locked-only surface omits it,
-// and one marked InviteOnly admits nobody: an invite-only surface whose resolver was never wired
-// fails closed rather than opening to every entitled plan.
+// InviteResolver reports whether the caller passes an invite-only surface's invite gate. The gate
+// consults it only for a feature or set marked InviteOnly, so a host wires one resolver for every
+// surface it serves and a plan-locked-only surface is never invite-gated by it. With no resolver
+// wired a marked surface admits nobody: an invite-only surface whose resolver was never wired fails
+// closed rather than opening to every entitled plan.
 type InviteResolver func(ctx context.Context, featureKey string) bool
 
 // Denier renders a refusal knowing only what was refused. A consumer installs one with WithDenier to
@@ -95,7 +96,7 @@ type Gate struct {
 // is replaced by one that never resolves a plan, so each request is denied. That is safe and useless,
 // which is what an unwired gate should be. flag/invite/denier are optional: a nil flag resolver darks
 // any FLAGGED feature (fail-closed); a nil invite resolver admits no one to an InviteOnly feature or set
-// (fail-closed) and gates no other on invites; with neither
+// (fail-closed), and no resolver gates a record not marked InviteOnly; with neither
 // a Denier nor a RefusalDenier (a nil one passed counts as none), DefaultRefusalDenier renders.
 func NewGate(reg *entitlement.Registry, extract PlanExtractor, opts ...Option) *Gate {
 	g := &Gate{reg: reg, extract: extract}
@@ -160,13 +161,13 @@ func (g *Gate) resolveFlag(ctx context.Context, flag string) bool {
 	return g.flag(ctx, flag)
 }
 
-// resolveInvite reports the invite decision for a feature or set key: the InviteResolver's answer when
-// one is wired, else invited exactly when the record is not InviteOnly.
+// resolveInvite reports the invite decision for a feature or set key. A record not marked InviteOnly
+// passes without asking the resolver; a marked one passes only on a wired resolver's yes.
 func (g *Gate) resolveInvite(ctx context.Context, key string, inviteOnly bool) bool {
-	if g.invite == nil {
-		return !inviteOnly
+	if !inviteOnly {
+		return true
 	}
-	return g.invite(ctx, key)
+	return g.invite != nil && g.invite(ctx, key)
 }
 
 // RequireFeature returns middleware that admits a request only when the caller's plan makes the feature

@@ -20,6 +20,7 @@ func refusalReg() *entitlement.Registry {
 	r.Register(entitlement.Feature{Key: "recording", Namespace: "app", AllowedPlans: []entitlement.PlanID{"pro"},
 		Display: entitlement.Meta{UpgradeURL: "/upgrade/recording"}})
 	r.Register(entitlement.Feature{Key: "beta", Namespace: "app", AllowedPlans: []entitlement.PlanID{"pro"}, Flag: "beta_flag"})
+	r.Register(entitlement.Feature{Key: "studio", Namespace: "app", AllowedPlans: []entitlement.PlanID{"pro"}, InviteOnly: true})
 	return r
 }
 
@@ -47,7 +48,7 @@ func TestDefaultGateAnswersEachRefusalByItsReason(t *testing.T) {
 		!strings.Contains(body, `"feature_required"`) || !strings.Contains(body, `"recording"`) || !strings.Contains(body, `"/upgrade/recording"`) {
 		t.Fatalf("plan lacks the feature: got %d %q, want 403 feature_required naming the feature and its upgrade URL", code, body)
 	}
-	if code, body := answer(t, uninvited.RequireFeature("app", "recording"), pro); code != http.StatusForbidden || !strings.Contains(body, `"not_invited"`) {
+	if code, body := answer(t, uninvited.RequireFeature("app", "studio"), pro); code != http.StatusForbidden || !strings.Contains(body, `"not_invited"`) {
 		t.Fatalf("not invited: got %d %q, want 403 not_invited", code, body)
 	}
 	if code, body := answer(t, g.RequireFeature("app", "recording"), context.Background()); code != http.StatusForbidden || !strings.Contains(body, `"plan_unresolved"`) {
