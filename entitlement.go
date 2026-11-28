@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Brandon Miller-Mumford.
+ * Licensed under the MIT License; see LICENSE.
+ */
+
 // Package entitlement is the scope-agnostic feature-entitlement gate. It answers one authorization
 // question — "does this plan include this feature?" — orthogonal to any RBAC/permission axis. It is a
 // pure in-memory registry seeded at the composition root and read on the hot path; it has no persistence

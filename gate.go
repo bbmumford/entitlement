@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Brandon Miller-Mumford.
+ * Licensed under the MIT License; see LICENSE.
+ */
+
 package entitlement
 
 // gate.go — the fail-closed entitlement resolver. Two orthogonal axes, never conflated: Allowed answers

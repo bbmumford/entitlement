@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Brandon Miller-Mumford.
+ * Licensed under the MIT License; see LICENSE.
+ */
+
 package entitlement
 
 // param.go — a feature key's parameters: one key confers its feature and carries named parameters

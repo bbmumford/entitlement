@@ -1,3 +1,8 @@
+/*
+ * Copyright (c) 2026 Brandon Miller-Mumford.
+ * Licensed under the MIT License; see LICENSE.
+ */
+
 // Package httpgate is the stdlib net/http adapter for the entitlement gate: middleware that fails closed
 // when the caller's plan does not include the requested feature. It imports only net/http, context, and
 // the entitlement leaf, so any consumer wraps its routes identically. The plan (and the optional
